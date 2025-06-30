@@ -1,19 +1,20 @@
 ## Role & Expertise
-You are a Terraform expert with 20+ years of experience designing, writing, and reviewing Terraform code for production-grade infrastructure. You know all major providers (AWS, GCP, Azure), Terraform best practices, module design, and security standards. You write clean, commented, and production-ready code.
+You are a Terraform expert with 20+ years of experience designing, writing, and reviewing Terraform code for production-grade infrastructure. You know all major providers, with a specialization in GCP, Terraform best practices, module design, and security standards. You write clean, commented, and production-ready code.
 
 ---
 
 ## Objective
-Generate a complete and ready-to-apply set of Terraform files that provision the infrastructure defined below, adhering to all specified best practices.
+Generate a complete and ready-to-apply set of Terraform files that provision the GCP infrastructure defined below, adhering to all specified best practices.
 
 ---
 
 ## 1. Context & Scope
-- **Cloud Provider(s):** `<e.g. aws, google, azurerm>`
-- **Region(s):** `<e.g. us-west-2, europe-west1>`
+- **Cloud Provider(s):** `google`
+- **Region(s):** `<e.g. us-central1, europe-west2>`
+- **Project ID:** `<your-gcp-project-id>`
 - **Environment:** `<e.g. dev, staging, prod>`
 - **Terraform Version:** `~> 1.5`
-- **Provider Versions:** `<e.g. hashicorp/aws ~> 5.0>`
+- **Provider Versions:** `hashicorp/google ~> 5.0`
 - **Intended Use:** `<e.g. multi-tier web application, data processing pipeline, core networking>`
 
 ---
@@ -23,23 +24,25 @@ List each resource and its key properties.
 
 | Resource Type | Name/Identifier | Key Properties |
 |---|---|---|
-| `<cloud_provider>_vpc` | `<project_vpc>` | cidr_block, enable_dns_hostnames |
-| `<cloud_provider>_subnet` | `<project_subnet>` | cidr_block, availability_zone, map_public_ip_on_launch |
-| `<cloud_provider>_instance` | `<web_server>` | instance_type, ami/image_id, key_name, tags |
-| `<cloud_provider>_db_instance` | `<db_instance>` | engine, engine_version, instance_class, allocated_storage |
+| `google_compute_network` | `project_vpc` | `auto_create_subnetworks=false` |
+| `google_compute_subnetwork` | `project_subnet` | `ip_cidr_range`, `region` |
+| `google_compute_instance` | `web_server_vm` | `machine_type`, `boot_disk.initialize_params.image`, `network_interface`, `tags` |
+| `google_sql_database_instance` | `db_instance` | `database_version`, `settings.tier`, `deletion_protection` |
+| `google_compute_global_address` | `private_service_access_range` | `purpose=VPC_PEERING`, `address_type=INTERNAL`, `prefix_length=16` |
+| `google_service_networking_connection` | `private_vpc_connection` | Connects the VPC to Google services for Cloud SQL. `network`, `service`, `reserved_peering_ranges` |
 | *(Add or remove rows as needed)* | | |
 
 ---
 
-## 2.1. Security Rules
-Define specific ingress and egress rules for security groups or firewalls.
+## 2.1. Firewall Rules
+Define specific ingress rules for VPC firewall.
 
-| Security Group Name | Direction | Protocol | Port Range | Source/Destination CIDR/SG | Description |
-|---|---|---|---|---|---|
-| `web_server_sg` | Ingress | tcp | 443 | `0.0.0.0/0` | Allow inbound HTTPS traffic from anywhere |
-| `web_server_sg` | Egress | all | all | `0.0.0.0/0` | Allow all outbound traffic |
-| `db_access_sg` | Ingress | tcp | 5432 | `<security_group_id_of_web_server_sg>` | Allow DB access from the web server security group |
-| *(Add or remove rows as needed)* | | | | | |
+| Firewall Rule Name | Direction | Action | Protocol & Ports | Target Tags | Source Ranges/Tags | Description |
+|---|---|---|---|---|---|---|
+| `allow-ssh` | INGRESS | ALLOW | `tcp:22` | `["web-server"]` | `["0.0.0.0/0"]` | Allow inbound SSH traffic from anywhere (for dev) |
+| `allow-https` | INGRESS | ALLOW | `tcp:443` | `["web-server"]` | `["0.0.0.0/0"]` | Allow inbound HTTPS traffic from anywhere |
+| `allow-internal-db` | INGRESS | ALLOW | `tcp:3306` | `["sql-database"]` | `["web-server"]` | Allow DB access from instances with the web-server tag |
+| *(Add or remove rows as needed)* | | | | | | |
 
 ---
 
@@ -48,8 +51,7 @@ Specify any data sources needed to fetch information.
 
 | Data Source Type | Name/Identifier | Purpose & Key Filters |
 |---|---|---|
-| `aws_ami` | `latest_amazon_linux` | To fetch the latest Amazon Linux 2 AMI ID. `owners=["amazon"]`, `most_recent=true` |
-| `aws_availability_zones` | `available` | To get a list of available AZs in the target region. `state="available"` |
+| `google_compute_image` | `latest_debian` | To fetch the latest Debian image for boot disks. `family="debian-11"`, `project="debian-cloud"` |
 | *(Add or remove rows as needed)* | | |
 
 ---
@@ -58,8 +60,13 @@ Specify any data sources needed to fetch information.
 Define all external parameters as Terraform variables.
 
 ```hcl
+variable "project_id" {
+  description = "The GCP project ID to deploy resources in."
+  type        = string
+}
+
 variable "project_name" {
-  description = "The name of the project, used for tagging resources."
+  description = "The name of the project, used for labeling resources."
   type        = string
 }
 
@@ -72,10 +79,10 @@ variable "environment" {
   }
 }
 
-variable "aws_region" {
-  description = "The AWS region to deploy resources in."
+variable "gcp_region" {
+  description = "The GCP region to deploy resources in."
   type        = string
-  default     = "us-west-2"
+  default     = "us-central1"
 }
 
 # ...add any other variables as needed
@@ -87,19 +94,25 @@ variable "aws_region" {
 Specify values to expose after a successful `terraform apply`.
 
 ```hcl
-output "vpc_id" {
-  description = "The ID of the created VPC."
-  value       = aws_vpc.project_vpc.id
+output "vpc_network_name" {
+  description = "The name of the created VPC network."
+  value       = google_compute_network.project_vpc.name
 }
 
-output "web_server_public_ip" {
-  description = "Public IP address of the web server instance."
-  value       = aws_instance.web_server.public_ip
+output "web_server_external_ip" {
+  description = "External IP address of the web server VM."
+  value       = google_compute_instance.web_server_vm.network_interface[0].access_config[0].nat_ip
 }
 
-output "database_endpoint" {
-  description = "The connection endpoint for the RDS database instance."
-  value       = aws_db_instance.db_instance.endpoint
+output "db_instance_connection_name" {
+  description = "The connection name for the Cloud SQL database instance."
+  value       = google_sql_database_instance.db_instance.connection_name
+  sensitive   = true
+}
+
+output "db_instance_private_ip" {
+  description = "The private IP address of the Cloud SQL instance."
+  value       = google_sql_database_instance.db_instance.private_ip_address
   sensitive   = true
 }
 
@@ -111,16 +124,16 @@ output "database_endpoint" {
 ## 5. Module Structure (Optional)
 If you want the code organized into reusable modules, specify the structure.
 
-- **`modules/network/`** → VPC, subnets, route tables, internet gateway
-- **`modules/compute/`** → EC2 instances, security groups, launch templates
-- **`modules/database/`** → RDS instances, parameter groups, subnet groups
+- **`modules/vpc/`** → VPC network, subnets, firewall rules, PSA
+- **`modules/gce/`** → Compute instances, instance templates
+- **`modules/cloud-sql/`** → Cloud SQL instances, users, databases
 
 ---
 
 ## 6. Best Practices & Constraints
-- **State Management:** Configure a remote backend (`s3` for AWS, `gcs` for GCP, `azurerm` for Azure) with state locking.
-- **Tagging:** All taggable resources MUST have `Name`, `Environment`, and `Project` tags.
-- **Security:** Follow the principle of least privilege for all IAM roles and security group rules. Do not use hardcoded secrets.
+- **State Management:** Configure a remote backend using a Google Cloud Storage (GCS) bucket.
+- **Labeling:** All resources that support it MUST have `environment` and `project` labels.
+- **Security:** Follow the principle of least privilege for all GCP IAM roles and Firewall Rules. Do not use hardcoded secrets.
 - **Readability:** Add comments to explain complex logic or non-obvious configurations.
 - **Dependencies:** Use explicit `depends_on` only when absolutely necessary; prefer implicit dependency resolution through resource interpolation.
 
@@ -128,9 +141,9 @@ If you want the code organized into reusable modules, specify the structure.
 
 ## Task
 Based on all the requirements above, generate the following files:
-1.  **`providers.tf`**: Configures the cloud provider(s) and required versions, including the remote state backend.
+1.  **`providers.tf`**: Configures the Google provider and required versions, including the GCS remote state backend.
 2.  **`variables.tf`**: Contains all variable definitions.
-3.  **`main.tf`**: Defines the core resources (or calls modules if specified).
+3.  **`main.tf`**: Defines the core resources (or calls modules if specified). **This file must start with a comment block describing its purpose and the infrastructure it creates.**
 4.  **`outputs.tf`**: Exposes the key attributes of the created infrastructure.
 5.  **`terraform.tfvars.example`**: Provides a sample file demonstrating how to set the required variable values.
 
